@@ -1,7 +1,7 @@
 {
   "private": false,
-  "displayName": "Homebridge Smarteefi Platform",
-  "name": "homebridge-smarteefi-local",
+  "displayName": "Homebridge Smarteefi Plugin",
+  "name": "homebridge-smarteefi-plugin",
   "version": "0.0.18",
   "description": "Control Smarteefi via Homekit",
   "license": "Apache-2.0",
@@ -11,10 +11,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/abhilash0505/homebridge-smarteefi-local.git"
+    "url": "https://github.com/Dev-ManishTomar/homebridge-smarteefi-plugin"
   },
   "bugs": {
-    "url": "https://github.com/abhilash0505/homebridge-smarteefi-local/issues"
+    "url": "https://github.com/Dev-ManishTomar/homebridge-smarteefi-plugin/issues"
   },
   "main": "dist/index.js",
   "scripts": {
@@ -25,7 +25,7 @@
   },
   "keywords": [
     "homebridge-plugin",
-    "homebridge-smarteefi-local"
+    "homebridge-smarteefi-plugin"
   ],
   "dependencies": {
     "axios": "^1.4.0",
