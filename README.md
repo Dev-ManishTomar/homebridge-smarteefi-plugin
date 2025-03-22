@@ -7,7 +7,8 @@
 ## Setup
 
 ```
-npm install -g homebridge-smarteefi-local
+npm install -g homebridge-smarteefi-plugin
+
 ```
 
 ## Configuration
