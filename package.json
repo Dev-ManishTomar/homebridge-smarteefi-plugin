@@ -2,7 +2,7 @@
   "private": false,
   "displayName": "Homebridge Smarteefi Plugin",
   "name": "homebridge-smarteefi-plugin",
-  "version": "0.0.18",
+  "version": "1.1.1",
   "description": "Control Smarteefi via Homekit",
   "license": "Apache-2.0",
   "engines": {
