@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "Smarteefi-local",
+  "pluginAlias": "Smarteefi-plugin",
   "pluginType": "platform",
   "singular": true,
   "schema": {
@@ -9,7 +9,7 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Smarteefi-local"
+        "default": "Smarteefi-plugin"
       },
       "userid": {
         "title": "Email ID",
