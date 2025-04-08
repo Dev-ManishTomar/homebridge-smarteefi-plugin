@@ -196,82 +196,93 @@ refreshStatus() {
  * Helper method to perform the actual refresh API calls for each configured device group.
  */
 private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
-    let completedUpdates = 0;
-    const configuredDeviceGroups = this.config.devices as DeviceConfigEntry[] || [];
-    const totalConfiguredDeviceGroups = configuredDeviceGroups.length;
-    if (totalConfiguredDeviceGroups === 0) return;
+  let completedUpdates = 0;
+  const configuredDeviceGroups = this.config.devices as DeviceConfigEntry[] || [];
+  const totalConfiguredDeviceGroups = configuredDeviceGroups.length;
+  if (totalConfiguredDeviceGroups === 0) return;
 
-    this.log.debug(`Executing refresh cycle...`);
+  this.log.debug(`Executing refresh cycle...`);
 
-    for (const deviceConfig of configuredDeviceGroups) {
-        const deviceId = deviceConfig?.device;
-        if (!deviceId) {
-            this.log.warn(`Skipping device config entry: missing 'device' ID.`);
-            completedUpdates++;
-            if (completedUpdates >= totalConfiguredDeviceGroups) this.log.info("Status refresh cycle completed (with skips).");
-            continue;
-        }
-        if (!apiHelper.getSwitchStatus) {
-             this.log.error(`API Helper is missing getSwitchStatus method. Skipping refresh for ${deviceId}`);
-             completedUpdates++;
-             if (completedUpdates >= totalConfiguredDeviceGroups) this.log.info("Status refresh cycle completed (with errors).");
-             continue;
-        }
+  for (const deviceConfig of configuredDeviceGroups) {
+      const deviceId = deviceConfig?.device;
+      if (!deviceId) { /* ... skip logic ... */ completedUpdates++; continue; }
+      if (!apiHelper.getSwitchStatus) { /* ... skip logic ... */ completedUpdates++; continue; }
 
-        // Use 'this' directly inside arrow function callback
-        apiHelper.getSwitchStatus(deviceId, 255, (body) => {
-            try {
-                if (!body || typeof body !== 'object' || body.result === "error" || body.result === "failure") {
-                    const reason = SmarteefiHelper.getReason(body?.major_ecode) || body?.reason || 'Unknown error or empty body';
-                    this.log.error(`Unable to get status for deviceId ${deviceId}. Reason: ${reason}`);
-                    this.deviceStatus.setStatusMap(deviceId, -1, -1);
-                } else {
-                    const switchmap = typeof body.switchmap === 'number' ? body.switchmap : 0;
-                    const statusmap = typeof body.statusmap === 'number' ? body.statusmap : 0;
-                    this.log.debug(`Received status for ${deviceId}: switchmap=${switchmap}, statusmap=${statusmap}`);
-                    this.deviceStatus.setStatusMap(deviceId, switchmap, statusmap);
+      apiHelper.getSwitchStatus(deviceId, 255, (body) => {
+          try {
+              if (!body || typeof body !== 'object' || body.result === "error" || body.result === "failure") {
+                  const reason = SmarteefiHelper.getReason(body?.major_ecode) || body?.reason || 'Unknown error or empty body';
+                  this.log.error(`Unable to get status for deviceId ${deviceId}. Reason: ${reason}`);
+                  // Update cache to reflect error (-1) and clear speed
+                  this.deviceStatus.setStatusMap(deviceId, -1, -1, undefined); // Mark cache as invalid/errored
+              } else {
+                  const switchmap = typeof body.switchmap === 'number' ? body.switchmap : 0;
+                  const statusmapFromGetStatus = typeof body.statusmap === 'number' ? body.statusmap : 0;
+                  this.log.debug(`[REFRESH / ${deviceId}] Received statusmap: ${statusmapFromGetStatus}`);
 
-                    for (const acc of this.accessories) {
-                         if (acc.context?.device?.id === deviceId) {
-                            const deviceContext = acc.context.device;
-                            const isFan = !!deviceContext.isFan;
-                            const sequence = typeof deviceContext.sequence === 'number' ? deviceContext.sequence : -1;
-                            if (sequence === -1) continue;
+                  // Update the DeviceStatus cache with the latest statusmap
+                  // **Do NOT pass a speed value here** - let setStatus preserve existing speed unless statusmap is 0
+                  this.deviceStatus.setStatusMap(deviceId, switchmap, statusmapFromGetStatus);
+                  this.log.debug(`[CACHE_UPDATE / Refresh] Updated DeviceStatus cache for ${deviceId} with statusmap=${statusmapFromGetStatus}`);
 
-                            const service = isFan ? acc.getService(this.Service.Fanv2) : acc.getService(this.Service.Switch);
-                            if (service) {
-                                try {
-                                  const onOffState = this.decodeStatus(sequence, deviceId);
-                                  const onOffCharacteristic = isFan ? this.Characteristic.Active : this.Characteristic.On;
-                                  if(service.testCharacteristic(onOffCharacteristic)) {
-                                      service.updateCharacteristic(onOffCharacteristic, onOffState);
-                                      this.log.debug(`Refreshed '${acc.displayName}' (${onOffCharacteristic.name}) to ${onOffState}`);
-                                  }
+                  // Update characteristics ONLY IF NEEDED for relevant accessories
+                  for (const acc of this.accessories) {
+                       if (acc.context?.device?.id === deviceId) {
+                          const deviceContext = acc.context.device;
+                          const isFan = !!deviceContext.isFan;
+                          const sequence = typeof deviceContext.sequence === 'number' ? deviceContext.sequence : -1;
+                          if (sequence === -1) continue;
+
+                          const service = isFan ? acc.getService(this.Service.Fanv2) : acc.getService(this.Service.Switch);
+                          if (service) {
+                              try {
+                                  // Determine target Active/On state based ONLY on getstatus result
+                                  let targetOnOffState: CharacteristicValue;
                                   if (isFan) {
-                                      const speedState = SmarteefiHelper.getSpeedFromStatusMap(statusmap, SmarteefiHelper.getSwitchMap(sequence));
-                                       if(service.testCharacteristic(this.Characteristic.RotationSpeed)) {
-                                          service.updateCharacteristic(this.Characteristic.RotationSpeed, speedState);
-                                          this.log.debug(`Refreshed '${acc.displayName}' (RotationSpeed) to ${speedState}%`);
-                                       }
+                                      // Fan Active state based *only* on the refreshed statusmap (0 = OFF)
+                                      targetOnOffState = statusmapFromGetStatus !== 0 ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE;
+                                  } else {
+                                      // Switch On state based on bitwise check of refreshed statusmap
+                                      targetOnOffState = (statusmapFromGetStatus & SmarteefiHelper.getSwitchMap(sequence)) !== 0;
                                   }
-                                } catch (decodeError) { this.log.error(`Error decoding/updating status for ${acc.displayName}: ${decodeError}`); }
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                this.log.error(`Error processing status update for ${deviceId}: ${msg}`);
-                 this.deviceStatus.setStatusMap(deviceId, -1, -1);
-            } finally {
-                completedUpdates++;
-                if (completedUpdates >= totalConfiguredDeviceGroups) {
-                    this.log.info("Status refresh cycle completed.");
-                }
-            }
-        });
-    }
-}
+
+                                  const onOffCharacteristic = isFan ? this.Characteristic.Active : this.Characteristic.On;
+
+                                  // Update HomeKit ONLY if the derived state differs from current HomeKit state
+                                  if(service.testCharacteristic(onOffCharacteristic)) {
+                                      const currentHKState = service.getCharacteristic(onOffCharacteristic).value;
+                                      if (currentHKState !== targetOnOffState) {
+                                          this.log.info(`[REFRESH / ${acc.displayName}] Updating ${onOffCharacteristic.name} from ${currentHKState} to ${targetOnOffState} based on getStatus.`);
+                                          service.updateCharacteristic(onOffCharacteristic, targetOnOffState);
+                                      } else {
+                                           this.log.debug(`[REFRESH / ${acc.displayName}] ${onOffCharacteristic.name} state already ${targetOnOffState}. No update needed.`);
+                                      }
+                                  }
+
+                                  // *** DO NOT UPDATE ROTATION SPEED DURING REFRESH ***
+                                  // if (isFan) {
+                                  //    // We skip updating RotationSpeed here to avoid overwriting user-set speed
+                                  //    this.log.debug(`[REFRESH / ${acc.displayName}] Skipping RotationSpeed update during background refresh.`);
+                                  // }
+
+                              } catch (updateError) { this.log.error(`Error updating characteristics for ${acc.displayName}: ${updateError}`); }
+                          }
+                      } // end if acc matches deviceId
+                  } // end loop accessories
+              } // end else status ok
+          } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              this.log.error(`Error processing status update for ${deviceId}: ${msg}`);
+              this.deviceStatus.setStatusMap(deviceId, -1, -1, undefined); // Mark cache as invalid/errored
+          } finally {
+              completedUpdates++;
+              if (completedUpdates >= totalConfiguredDeviceGroups) {
+                  this.log.info("Status refresh cycle completed.");
+              }
+          }
+      }); // end getSwitchStatus callback
+  } // end for loop deviceConfig
+} // end executeRefreshCycle
 
 decodeStatus(sequence: number, deviceId: string): CharacteristicValue {
   return SmarteefiHelper.decodeStatus(sequence, deviceId, this.Characteristic, this.deviceStatus);

@@ -52,6 +52,24 @@ const setCorrectDeviceID = (id) => {
   return idSplit[0];
 }
 
+/**
+ * Converts an API speed value (1-4) to a HomeKit percentage (0-100).
+ * Returns 0 if the input is null, undefined, or invalid.
+ */
+export function valueToPercent(value: number | null | undefined): number {
+  if (value === null || value === undefined || value <= 0) {
+      return 0;
+  }
+  switch (value) {
+      case 1: return 25;
+      case 2: return 50;
+      case 3: return 75;
+      case 4: return 100;
+      default: // If value is > 4, cap at 100, otherwise treat as invalid (0)
+          return value > 4 ? 100 : 0;
+  }
+}
+
 export {
   getReason,
   decodeStatus,
