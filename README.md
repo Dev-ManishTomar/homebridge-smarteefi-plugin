@@ -32,19 +32,7 @@ If you are interested in RE-ing the packets, install Wireshark and understand th
 
 Smarteefi web portal is used to emulate the cloud interaction. Device states are stored locally and are refreshed from the cloud (non-API).
 
-## Current Support for Local
-- Switch (Single, Double, Quadruple) - ON/OFF
-- Fan (WIP)- ON/OFF/Set Speed
-- Switch/Fan Module - TBD
-- Anything else? - TBD
 
 ## Current Support for Smarteefi Cloud
 - Switch (Single, Double, Quadruple) - ON/OFF
-- Fan - ON/OFF/Set Speed; Works but Fan control maybe buggy
-- Switch/Fan Module - TBD
-- Anything else? - TBD
-
-## Gotchas
-The web portal of Smarteefi does not accurately work for FAN modules. If you have a dedicated FAN module or a module with FAN, the current power/speed is determined by the operations performed on HomeBridge.
-
-Additionally, the web portal does not support 5 devices in a module. A special "hack" has been added to support the same. It assumes that in a 5 module device with a specific series in serial #, the last module is a fan. 
+- Fan - ON/OFF/Set Speed; Working
