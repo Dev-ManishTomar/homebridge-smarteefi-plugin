@@ -236,11 +236,20 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                           const service = isFan ? acc.getService(this.Service.Fanv2) : acc.getService(this.Service.Switch);
                           if (service) {
                               try {
-                                  // Determine target Active/On state based ONLY on getstatus result
+                                  // Determine target Active/On state
                                   let targetOnOffState: CharacteristicValue;
                                   if (isFan) {
-                                      // Fan Active state based *only* on the refreshed statusmap (0 = OFF)
-                                      targetOnOffState = statusmapFromGetStatus !== 0 ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE;
+                                      // For fans, check BOTH API statusmap AND our cached speedValue
+                                      // If our cache says speedValue is null (fan was just turned OFF), trust that
+                                      const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
+                                      const cachedSpeedValue = cachedStatus?.speedValue ?? null;
+                                      
+                                      // If cache says fan is OFF (speedValue = null), don't let API override it
+                                      if (cachedSpeedValue === null || statusmapFromGetStatus === 0) {
+                                          targetOnOffState = this.Characteristic.Active.INACTIVE;
+                                      } else {
+                                          targetOnOffState = this.Characteristic.Active.ACTIVE;
+                                      }
                                   } else {
                                       // Switch On state based on bitwise check of refreshed statusmap
                                       targetOnOffState = (statusmapFromGetStatus & SmarteefiHelper.getSwitchMap(sequence)) !== 0;

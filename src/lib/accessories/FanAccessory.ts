@@ -10,9 +10,6 @@ import { BaseAccessory } from './BaseAccessory';
 
 export class FanAccessory extends BaseAccessory {
 
-    private currentActiveState: CharacteristicValue = this.platform.Characteristic.Active.INACTIVE;
-    private currentSpeedPercent: CharacteristicValue = 0;
-
     constructor(
         platform: SmarteefiPlatform,
         accessory: PlatformAccessory,
@@ -44,15 +41,44 @@ export class FanAccessory extends BaseAccessory {
 
     // --- GET Handlers ---
     async getSpeed(): Promise<CharacteristicValue> {
-        const speedToReturn = this.currentSpeedPercent;
-        this.platform.log.info(`GET RotationSpeed for ${this.accessory.displayName}: Returning cached speed ${speedToReturn}%`);
-        return speedToReturn;
+        const deviceId = this.accessory.context.device.id;
+        const currentDeviceStatus = this.deviceStatus.getStatusMap(deviceId);
+        
+        // Get speedValue from cache and convert to percentage
+        const speedValue = currentDeviceStatus?.speedValue ?? null;
+        let speedPercent = 0;
+        
+        if (speedValue !== null && speedValue > 0) {
+            speedPercent = SmarteefiHelper.valueToPercent(speedValue);
+        } else if (currentDeviceStatus?.statusmap === 0) {
+            // Device is OFF
+            speedPercent = 0;
+        } else {
+            // No speed info but device might be on - default to 25%
+            speedPercent = 0;
+        }
+        
+        this.platform.log.info(`GET RotationSpeed for ${this.accessory.displayName}: Returning speed ${speedPercent}% (speedValue=${speedValue})`);
+        return speedPercent;
     }
 
     async getONOFFState(): Promise<CharacteristicValue> {
-        const stateToReturn = this.currentActiveState;
-        this.platform.log.info(`GET Active state for ${this.accessory.displayName}: Returning cached state ${stateToReturn}`);
-        return stateToReturn;
+        const deviceId = this.accessory.context.device.id;
+        const currentDeviceStatus = this.deviceStatus.getStatusMap(deviceId);
+        const statusmap = currentDeviceStatus?.statusmap ?? 0;
+        
+        this.platform.log.debug(`GET Active for ${this.accessory.displayName}: DeviceId=${deviceId}, StatusMap=${statusmap}`);
+        
+        if (statusmap === -1) {
+            this.platform.log.warn(`GET Active for ${this.accessory.displayName}: Status is marked as errored (-1).`);
+            throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+        }
+        
+        // Simple logic: statusmap 0 = OFF, anything else = ON
+        const isActive = statusmap === 0 ? this.platform.Characteristic.Active.INACTIVE : this.platform.Characteristic.Active.ACTIVE;
+        
+        this.platform.log.info(`GET Active state for ${this.accessory.displayName}: Returning ${isActive === 0 ? 'INACTIVE' : 'ACTIVE'} (statusmap=${statusmap})`);
+        return isActive;
     }
 
     // --- SET Handlers ---
@@ -66,10 +92,13 @@ export class FanAccessory extends BaseAccessory {
         }
 
         // Ensure Active state is ON locally if setting speed > 0
-        if (this.currentActiveState === this.platform.Characteristic.Active.INACTIVE) {
+        const deviceId = this.accessory.context.device.id;
+        const currentDeviceStatus = this.deviceStatus.getStatusMap(deviceId);
+        const currentStatusmap = currentDeviceStatus?.statusmap ?? 0;
+        
+        if (currentStatusmap === 0) {
              this.platform.log.debug(`SET Speed > 0: Ensuring Active state is ON internally.`);
-             this.currentActiveState = this.platform.Characteristic.Active.ACTIVE;
-             this.service?.updateCharacteristic(this.platform.Characteristic.Active, this.currentActiveState);
+             this.service?.updateCharacteristic(this.platform.Characteristic.Active, this.platform.Characteristic.Active.ACTIVE);
         }
 
         const apiHelper = this.platform.apiHelper;
@@ -77,7 +106,6 @@ export class FanAccessory extends BaseAccessory {
             this.platform.log.error(`API Helper or device context not available for ${this.accessory.displayName}. Cannot set speed.`);
             throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
         }
-        const deviceId = this.accessory.context.device.id;
         const deviceIp = this.accessory.context.device.ip;
 
         try {
@@ -88,19 +116,15 @@ export class FanAccessory extends BaseAccessory {
                         this.platform.log.info(`API call to set fan speed for ${this.accessory.displayName} successful.`);
                         const apiReportedSpeedValue = response.value;
                         const apiReportedOnState = response.status === 1;
-                        const newActiveState = apiReportedOnState ? this.platform.Characteristic.Active.ACTIVE : this.platform.Characteristic.Active.INACTIVE;
-                        const newSpeedPercent = SmarteefiHelper.valueToPercent(apiReportedSpeedValue);
+                        const newStatusmap = apiReportedOnState ? 112 : 0; // Fan uses statusmap 112 for ON, 0 for OFF
 
-                        this.platform.log.info(`[CACHE_UPDATE / setSpeed] Internal state updated for ${deviceId}: Active=${newActiveState}, Speed=${newSpeedPercent}%`);
-                        this.currentActiveState = newActiveState;
-                        this.currentSpeedPercent = newSpeedPercent;
-
-                        // Optional local updates
-                        // if (this.service?.getCharacteristic(this.platform.Characteristic.Active).value !== this.currentActiveState) { ... }
-                        // if (this.service?.getCharacteristic(this.platform.Characteristic.RotationSpeed).value !== this.currentSpeedPercent) { ... }
+                        this.platform.log.info(`[CACHE_UPDATE / setSpeed] Updating DeviceStatus cache for ${deviceId}: statusmap=${newStatusmap}, speedValue=${apiReportedSpeedValue}`);
+                        
+                        // Update the shared DeviceStatus cache with the new state and speed
+                        this.deviceStatus.setStatusMap(deviceId, 112, newStatusmap, apiReportedSpeedValue);
 
                     } else if (response && response.result === 'success') {
-                        this.platform.log.warn(`Set fan speed API call succeeded but did not return status/value. Internal cache not updated.`);
+                        this.platform.log.warn(`Set fan speed API call succeeded but did not return status/value. DeviceStatus cache not updated.`);
                     } else {
                         this.platform.log.error(`API call failed to set fan speed for ${this.accessory.displayName}: ${response?.reason || 'Unknown API error'}`);
                     }
@@ -118,18 +142,12 @@ export class FanAccessory extends BaseAccessory {
         const targetStateHK = value as number; // Active characteristic value is number (0 or 1)
         const targetState = targetStateHK === this.platform.Characteristic.Active.ACTIVE ? 'ON' : 'OFF';
 
-        // Avoid redundant calls
-        // ** FIX 3a: Type check currentActiveState before comparing **
-        if (typeof this.currentActiveState === 'number' && targetStateHK === this.currentActiveState) {
-            this.platform.log.info(`SET Active request for ${this.accessory.displayName} to ${targetState}, but already in that state. Skipping API call.`);
-            return;
-        }
+        const deviceId = this.accessory.context.device.id;
         this.platform.log.info(`SET Active request for ${this.accessory.displayName} to ${targetState}`);
 
         const apiHelper = this.platform.apiHelper;
         if (!apiHelper || !this.accessory.context?.device) { /* ... error handling ... */ throw new Error("API Helper or context missing"); }
 
-        const deviceId = this.accessory.context.device.id;
         const deviceIp = this.accessory.context.device.ip;
         const sequence = this.accessory.context.device.sequence;
 
@@ -143,29 +161,28 @@ export class FanAccessory extends BaseAccessory {
                     if (response && response.result === 'success') {
                         this.platform.log.info(`API call to set fan ${targetState} for ${this.accessory.displayName} successful.`);
 
-                        // Update internal state cache
-                        this.currentActiveState = targetStateHK; // Update Active state
-
-                        let speedToCache: number;
-                        // ** FIX 1 & 3b: Check type of currentSpeedPercent before comparison/assignment **
-                        const currentSpeedNum = typeof this.currentSpeedPercent === 'number' ? this.currentSpeedPercent : 0;
+                        // Update DeviceStatus cache
+                        const newStatusmap = targetState === 'ON' ? 112 : 0;
+                        
+                        // Get current speed value from cache to preserve it when turning ON/OFF
+                        const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
+                        const currentSpeed = cachedStatus?.speedValue ?? null;
+                        let speedToStore: number | null;
 
                         if (targetState === 'OFF') {
-                            speedToCache = 0; // Set speed to 0 when turning off
+                            // When turning OFF, clear the speed in cache
+                            speedToStore = null;
                         } else {
-                            // If turning ON, restore last known speed OR default to 25%
-                            // ** FIX 3c: Use the checked currentSpeedNum **
-                            speedToCache = currentSpeedNum > 0 ? currentSpeedNum : 25;
+                            // If turning ON, preserve last known speed OR default to 1 (25%)
+                            speedToStore = (currentSpeed && currentSpeed > 0) ? currentSpeed : 1;
                         }
-                        this.currentSpeedPercent = speedToCache; // Update speed cache
 
-                        this.platform.log.info(`[CACHE_UPDATE / setONOFFState] Internal state updated: Active=${this.currentActiveState}, Speed=${this.currentSpeedPercent}%`);
-
-                        // Update speed characteristic locally for immediate feedback
-                        // ** FIX 3d: Add null check for service **
-                        if (this.service && this.service.getCharacteristic(this.platform.Characteristic.RotationSpeed).value !== this.currentSpeedPercent){
-                             this.service.updateCharacteristic(this.platform.Characteristic.RotationSpeed, this.currentSpeedPercent);
-                        }
+                        this.platform.log.info(`[CACHE_UPDATE / setONOFFState] Updating DeviceStatus cache for ${deviceId}: statusmap=${newStatusmap}, speedValue=${speedToStore}`);
+                        
+                        // Update cache FIRST before any characteristic updates
+                        this.deviceStatus.setStatusMap(deviceId, 112, newStatusmap, speedToStore);
+                        
+                        this.platform.log.info(`Cache updated. Now updating HomeKit characteristics for ${this.accessory.displayName}...`);
 
                     } else {
                         this.platform.log.error(`API call failed to set fan ${targetState} for ${this.accessory.displayName}: ${response?.reason || 'Unknown error'}`);
