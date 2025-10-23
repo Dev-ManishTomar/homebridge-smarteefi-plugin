@@ -33,6 +33,7 @@ public readonly accessories: PlatformAccessory[] = [];
 public readonly apiHelper!: SmarteefiAPIHelper;
 
 private refreshDelay = 60000;
+private commandGracePeriod = 3000; // Default 3 seconds grace period after commands
 private deviceStatus: DeviceStatus = DeviceStatus.Instance();
 private refreshInterval: NodeJS.Timeout | null = null;
 private platformReady = false;
@@ -63,6 +64,7 @@ constructor(
   }
 
   this.refreshDelay = this.config.refreshDelay || 60000;
+  this.commandGracePeriod = this.config.commandGracePeriod || 3000;
 
   this.api.on('didFinishLaunching', () => {
     this.log.debug('Executed didFinishLaunching callback');
@@ -233,23 +235,31 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                           const sequence = typeof deviceContext.sequence === 'number' ? deviceContext.sequence : -1;
                           if (sequence === -1) continue;
 
+                          // Check if we should skip updating due to recent command (grace period)
+                          const shouldSkip = this.deviceStatus.shouldSkipRefreshUpdate(deviceId, this.commandGracePeriod);
+                          if (shouldSkip) {
+                              this.log.debug(`[REFRESH / ${acc.displayName}] Skipping characteristic update - recent command or pending update`);
+                              continue;
+                          }
+
                           const service = isFan ? acc.getService(this.Service.Fanv2) : acc.getService(this.Service.Switch);
                           if (service) {
                               try {
                                   // Determine target Active/On state
                                   let targetOnOffState: CharacteristicValue;
                                   if (isFan) {
-                                      // For fans, check BOTH API statusmap AND our cached speedValue
-                                      // If our cache says speedValue is null (fan was just turned OFF), trust that
+                                      // For fans, use speedValue to determine ON/OFF state
+                                      // Fan is ON only if speedValue > 0
                                       const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
                                       const cachedSpeedValue = cachedStatus?.speedValue ?? null;
                                       
-                                      // If cache says fan is OFF (speedValue = null), don't let API override it
-                                      if (cachedSpeedValue === null || statusmapFromGetStatus === 0) {
-                                          targetOnOffState = this.Characteristic.Active.INACTIVE;
-                                      } else {
+                                      if (cachedSpeedValue !== null && cachedSpeedValue > 0) {
                                           targetOnOffState = this.Characteristic.Active.ACTIVE;
+                                      } else {
+                                          targetOnOffState = this.Characteristic.Active.INACTIVE;
                                       }
+                                      
+                                      this.log.debug(`[REFRESH / ${acc.displayName}] Fan state determined: ${targetOnOffState === 0 ? 'INACTIVE' : 'ACTIVE'} (speed=${cachedSpeedValue}, statusmap=${statusmapFromGetStatus})`);
                                   } else {
                                       // Switch On state based on bitwise check of refreshed statusmap
                                       targetOnOffState = (statusmapFromGetStatus & SmarteefiHelper.getSwitchMap(sequence)) !== 0;
@@ -268,11 +278,22 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                                       }
                                   }
 
-                                  // *** DO NOT UPDATE ROTATION SPEED DURING REFRESH ***
-                                  // if (isFan) {
-                                  //    // We skip updating RotationSpeed here to avoid overwriting user-set speed
-                                  //    this.log.debug(`[REFRESH / ${acc.displayName}] Skipping RotationSpeed update during background refresh.`);
-                                  // }
+                                  // *** RE-ENABLE ROTATION SPEED UPDATE WITH GRACE PERIOD CHECK ***
+                                  if (isFan && service.testCharacteristic(this.Characteristic.RotationSpeed)) {
+                                      const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
+                                      const cachedSpeedValue = cachedStatus?.speedValue ?? null;
+                                      
+                                      if (cachedSpeedValue !== null && cachedSpeedValue > 0) {
+                                          const targetSpeedPercent = SmarteefiHelper.valueToPercent(cachedSpeedValue);
+                                          const currentSpeedPercent = service.getCharacteristic(this.Characteristic.RotationSpeed).value as number;
+                                          
+                                          // Only update if different (avoid unnecessary updates)
+                                          if (currentSpeedPercent !== targetSpeedPercent) {
+                                              this.log.debug(`[REFRESH / ${acc.displayName}] Updating RotationSpeed from ${currentSpeedPercent}% to ${targetSpeedPercent}%`);
+                                              service.updateCharacteristic(this.Characteristic.RotationSpeed, targetSpeedPercent);
+                                          }
+                                      }
+                                  }
 
                               } catch (updateError) { this.log.error(`Error updating characteristics for ${acc.displayName}: ${updateError}`); }
                           }

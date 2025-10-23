@@ -64,12 +64,20 @@ export class Status {
     public switchmap = 255;
     public statusmap = 0;
     public speedValue: number | null = null; // Store speed 1-4 for fans
+    public lastCommandTimestamp = 0; // Track last user command
+    public pendingUpdate = false; // Prevent refresh conflicts
+    public previousState?: { // For rollback on failure
+        statusmap: number;
+        speedValue: number | null;
+    };
 
     constructor(id: string, switchmap: number, statusmap: number, speedValue: number | null = null) {
         this.id = id;
         this.switchmap = switchmap;
         this.statusmap = statusmap;
         this.speedValue = speedValue;
+        this.lastCommandTimestamp = 0;
+        this.pendingUpdate = false;
     }
 }
 
@@ -103,12 +111,76 @@ export class DeviceStatus {
             if (speedValue !== undefined) {
                  statusObj.speedValue = speedValue;
             }
-            // If the primary statusmap indicates OFF, ensure speed is cleared
-            // (Assuming statusmap 0 from getSwitchStatus reliably means OFF)
-            if (statusmap === 0 && statusObj.speedValue !== null) {
-                 statusObj.speedValue = null;
-            }
+            // DON'T clear speedValue when statusmap is 0 - preserve last known speed
+            // This allows restoring the speed when turning the fan back ON
         }
+    }
+
+    /**
+     * Mark that a command is in progress for a device to prevent refresh conflicts
+     */
+    markCommandInProgress(id: string): void {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj) {
+            statusObj.pendingUpdate = true;
+            statusObj.lastCommandTimestamp = Date.now();
+        }
+    }
+
+    /**
+     * Mark that a command is complete for a device
+     */
+    markCommandComplete(id: string): void {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj) {
+            statusObj.pendingUpdate = false;
+        }
+    }
+
+    /**
+     * Check if a refresh update should be skipped due to a recent command
+     */
+    shouldSkipRefreshUpdate(id: string, graceMs: number): boolean {
+        const statusObj = this.getStatusMap(id);
+        if (!statusObj) {
+            return false;
+        }
+        
+        // Skip if update is pending
+        if (statusObj.pendingUpdate) {
+            return true;
+        }
+        
+        // Skip if command was recent
+        const timeSinceCommand = Date.now() - statusObj.lastCommandTimestamp;
+        return timeSinceCommand < graceMs;
+    }
+
+    /**
+     * Save the current state for potential rollback
+     */
+    saveRollbackState(id: string): void {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj) {
+            statusObj.previousState = {
+                statusmap: statusObj.statusmap,
+                speedValue: statusObj.speedValue,
+            };
+        }
+    }
+
+    /**
+     * Rollback to the previous state if API call failed
+     */
+    rollbackState(id: string): boolean {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj && statusObj.previousState) {
+            statusObj.statusmap = statusObj.previousState.statusmap;
+            statusObj.speedValue = statusObj.previousState.speedValue;
+            statusObj.previousState = undefined;
+            return true;
+        }
+        return false;
     }
 
     // Keep Instance method

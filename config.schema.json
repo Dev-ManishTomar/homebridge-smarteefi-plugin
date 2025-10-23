@@ -32,6 +32,13 @@
         "default": "60000",
         "description": "Polling frequency for status refresh (milliseconds)"
       },
+      "commandGracePeriod": {
+        "title": "Command Grace Period (milliseconds)",
+        "type": "number",
+        "required": false,
+        "default": 3000,
+        "description": "Time to wait after user commands before background refresh updates characteristics (prevents conflicts)"
+      },
       "devices": {
         "title": "List of Smarteefi Devices",
         "type": "array",

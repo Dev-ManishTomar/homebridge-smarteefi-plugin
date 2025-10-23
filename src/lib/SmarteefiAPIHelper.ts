@@ -435,7 +435,11 @@ export class SmarteefiAPIHelper {
 
         // --- API Call and Response Handling ---
         await this._apiCall(url, "POST", commandObj, (_body, err) => {
-            let response = { result: "failure", reason: "Unknown API error" }; // Simpler response for speed?
+            let response: { result: string; reason?: string; status?: number; value?: number } = { 
+                result: "failure", 
+                reason: "Unknown API error" 
+            };
+            
             if (err) {
                 const errorMessage = err instanceof Error ? err.message : String(err);
                 this.log.error(`API call failed for set fan speed on ${deviceId}: ${errorMessage}`);
@@ -449,12 +453,29 @@ export class SmarteefiAPIHelper {
                     }
                     const parsedBody = JSON.parse(_body);
                     this.log.debug(`Parsed set fan speed response: ${JSON.stringify(parsedBody)}`);
-                    // Merge API response - check what setdimctl returns
-                    response = { ...response, ...parsedBody };
-                    if (parsedBody.result !== 'success') {
-                         this.log.warn(`Cloud set fan speed for ${deviceId} reported non-success: ${parsedBody.result}`);
+                    
+                    // Extract important fields from API response
+                    // The API should return: { result: 'success', status: 1, value: 2, ... }
+                    response.result = parsedBody.result || 'failure';
+                    
+                    // Parse status (1 = ON, 0 = OFF) and value (1-4 speed)
+                    if (parsedBody.status !== undefined) {
+                        response.status = typeof parsedBody.status === 'number' ? parsedBody.status : 
+                                         (parsedBody.status === 1 || parsedBody.status === '1') ? 1 : 0;
+                    }
+                    
+                    if (parsedBody.value !== undefined) {
+                        response.value = typeof parsedBody.value === 'number' ? parsedBody.value : parseInt(parsedBody.value, 10);
+                    }
+                    
+                    if (parsedBody.reason) {
+                        response.reason = parsedBody.reason;
+                    }
+                    
+                    if (response.result !== 'success') {
+                         this.log.warn(`Cloud set fan speed for ${deviceId} reported non-success: ${response.result}`);
                     } else {
-                         this.log.info(`Cloud set fan speed for ${deviceId} to value ${apiValue} successful.`);
+                         this.log.info(`Cloud set fan speed for ${deviceId} to value ${apiValue} successful (API confirmed: status=${response.status}, value=${response.value})`);
                     }
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : String(error);
