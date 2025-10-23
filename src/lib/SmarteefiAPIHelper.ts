@@ -13,7 +13,10 @@ export class SmarteefiAPIHelper {
         this.apiHost = `https://www.smarteefi.com/api/v3`; // Updated to v3 API
         this.config = config;
         this.token = ""; // Initialize token
-        this.log.info(`API Helper configured for user: ${this.userid}, API Host: ${this.apiHost}, Local Control: ${config.local}`);
+        
+        // Mask email for privacy (show only first 2 chars and domain)
+        const maskedEmail = this.userid ? this.userid.substring(0, 2) + '***@' + this.userid.split('@')[1] : 'unknown';
+        this.log.info(`API Helper configured for user: ${maskedEmail}, API Host: ${this.apiHost}, Local Control: ${config.local}`);
     }
 
     private userid = "";
@@ -41,17 +44,18 @@ export class SmarteefiAPIHelper {
     }
 
     login(cb) {
-        this.log.info(`Attempting login for user: ${this.userid} to ${this.apiHost}...`);
+        const maskedEmail = this.userid ? this.userid.substring(0, 2) + '***@' + this.userid.split('@')[1] : 'unknown';
+        this.log.info(`Attempting login for user: ${maskedEmail} to ${this.apiHost}...`);
         this._loginApiCall(this.apiHost + "/user/login", {}, (token) => {
             if (!token) {
-                this.log.warn(`Login failed for user: ${this.userid}. Retrying in 60 seconds...`);
+                this.log.warn(`Login failed for user: ${maskedEmail}. Retrying in 60 seconds...`);
                 setTimeout(() => {
                     this.log.info("Retrying login...");
                     this.login(cb);
                 }, 60000);
                 // Optionally pass failure back if needed: cb(null);
             } else {
-                this.log.info(`Login successful for user: ${this.userid}. Token acquired.`);
+                this.log.info(`Login successful for user: ${maskedEmail}. Token acquired.`);
                 cb(token); // Pass the token back
             }
         });

@@ -1,4 +1,4 @@
-const PLATFORM_NAME = "Smarteefi-Plugin";
+const PLATFORM_NAME = "Smarteefi-plugin";  // Must match config.schema.json pluginAlias
 const PLUGIN_NAME = "homebridge-smarteefi-plugin";
 const MAX_FAN_SPEED_UNIT = 4;
 const BASE_FAN_SPEED = 158;

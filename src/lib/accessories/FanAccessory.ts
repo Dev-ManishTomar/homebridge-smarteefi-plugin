@@ -29,13 +29,22 @@ export class FanAccessory extends BaseAccessory {
             return;
         }
         this.platform.log.debug(`Setting up Fanv2 service for ${this.accessory.displayName}`);
-        // No initial state fetch needed - rely on cache or first GET/SET
+        
+        // Configure RotationSpeed characteristic with discrete steps FIRST
+        const rotationSpeedChar = this.service.getCharacteristic(this.platform.Characteristic.RotationSpeed);
+        rotationSpeedChar.setProps({
+            minStep: 25,  // Makes slider snap to discrete levels: 0%, 25%, 50%, 75%, 100%
+            minValue: 0,
+            maxValue: 100,
+            validValueRanges: [0, 100], // Explicitly set valid range
+        });
+        this.platform.log.info(`✓ Configured ${this.accessory.displayName} with discrete speed steps: 0%, 25%, 50%, 75%, 100%`);
 
-        // Register Handlers
+        // Register Handlers AFTER props are set
         this.service.getCharacteristic(this.platform.Characteristic.Active)
             .onGet(this.getONOFFState.bind(this))
             .onSet(this.setONOFFState.bind(this));
-        this.service.getCharacteristic(this.platform.Characteristic.RotationSpeed)
+        rotationSpeedChar
             .onGet(this.getSpeed.bind(this))
             .onSet(this.setSpeed.bind(this));
     }
