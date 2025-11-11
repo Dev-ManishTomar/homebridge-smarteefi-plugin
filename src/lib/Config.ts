@@ -64,6 +64,8 @@ export class Status {
     public switchmap = 255;
     public statusmap = 0;
     public speedValue: number | null = null; // Store speed 1-4 for fans
+    public preservedSpeedValue: number | null = null; // Last non-zero speed to restore on ON
+    public preservedAtOff: number | null = null; // Snapshot of speed at OFF time for next ON restore
     public lastCommandTimestamp = 0; // Track last user command
     public pendingUpdate = false; // Prevent refresh conflicts
     public previousState?: { // For rollback on failure
@@ -76,6 +78,8 @@ export class Status {
         this.switchmap = switchmap;
         this.statusmap = statusmap;
         this.speedValue = speedValue;
+        this.preservedSpeedValue = null;
+        this.preservedAtOff = null;
         this.lastCommandTimestamp = 0;
         this.pendingUpdate = false;
     }
@@ -114,6 +118,42 @@ export class DeviceStatus {
             // DON'T clear speedValue when statusmap is 0 - preserve last known speed
             // This allows restoring the speed when turning the fan back ON
         }
+    }
+
+    /**
+     * Set or update the preservedSpeedValue (last non-zero speed for restore).
+     */
+    setPreservedSpeedValue(id: string, preserved: number | null): void {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj) {
+            statusObj.preservedSpeedValue = preserved;
+        }
+    }
+
+    /**
+     * Get the preservedSpeedValue for a device (may be null).
+     */
+    getPreservedSpeedValue(id: string): number | null {
+        const statusObj = this.getStatusMap(id);
+        return statusObj ? (statusObj.preservedSpeedValue ?? null) : null;
+    }
+
+    /**
+     * Set a snapshot to restore exactly on the next ON after an OFF.
+     */
+    setPreservedAtOff(id: string, preserved: number | null): void {
+        const statusObj = this.getStatusMap(id);
+        if (statusObj) {
+            statusObj.preservedAtOff = preserved;
+        }
+    }
+
+    /**
+     * Get the OFF snapshot value if present.
+     */
+    getPreservedAtOff(id: string): number | null {
+        const statusObj = this.getStatusMap(id);
+        return statusObj ? (statusObj.preservedAtOff ?? null) : null;
     }
 
     /**

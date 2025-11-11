@@ -227,6 +227,9 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                   this.deviceStatus.setStatusMap(deviceId, switchmap, statusmapFromGetStatus);
                   this.log.debug(`[CACHE_UPDATE / Refresh] Updated DeviceStatus cache for ${deviceId} with statusmap=${statusmapFromGetStatus}`);
 
+                  // Do NOT attempt to derive fan speed from statusmap (cloud encoding is unreliable)
+                  // Keep cached speedValue as set by setdimctl responses or accessory handlers.
+
                   // Update characteristics ONLY IF NEEDED for relevant accessories
                   for (const acc of this.accessories) {
                        if (acc.context?.device?.id === deviceId) {
@@ -248,18 +251,12 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                                   // Determine target Active/On state
                                   let targetOnOffState: CharacteristicValue;
                                   if (isFan) {
-                                      // For fans, use speedValue to determine ON/OFF state
-                                      // Fan is ON only if speedValue > 0
+                                      // For fans, use cached speedValue to derive ON/OFF
                                       const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
                                       const cachedSpeedValue = cachedStatus?.speedValue ?? null;
-                                      
-                                      if (cachedSpeedValue !== null && cachedSpeedValue > 0) {
-                                          targetOnOffState = this.Characteristic.Active.ACTIVE;
-                                      } else {
-                                          targetOnOffState = this.Characteristic.Active.INACTIVE;
-                                      }
-                                      
-                                      this.log.debug(`[REFRESH / ${acc.displayName}] Fan state determined: ${targetOnOffState === 0 ? 'INACTIVE' : 'ACTIVE'} (speed=${cachedSpeedValue}, statusmap=${statusmapFromGetStatus})`);
+                                      const isFanOn = cachedSpeedValue !== null && cachedSpeedValue > 0;
+                                      targetOnOffState = isFanOn ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE;
+                                      this.log.debug(`[REFRESH / ${acc.displayName}] Fan state from cached speed: ${isFanOn ? 'ACTIVE' : 'INACTIVE'} (speedValue=${cachedSpeedValue}, statusmap=${statusmapFromGetStatus})`);
                                   } else {
                                       // Switch On state based on bitwise check of refreshed statusmap
                                       targetOnOffState = (statusmapFromGetStatus & SmarteefiHelper.getSwitchMap(sequence)) !== 0;
@@ -282,15 +279,20 @@ private executeRefreshCycle(apiHelper: SmarteefiAPIHelper) {
                                   if (isFan && service.testCharacteristic(this.Characteristic.RotationSpeed)) {
                                       const cachedStatus = this.deviceStatus.getStatusMap(deviceId);
                                       const cachedSpeedValue = cachedStatus?.speedValue ?? null;
-                                      
-                                      if (cachedSpeedValue !== null && cachedSpeedValue > 0) {
-                                          const targetSpeedPercent = SmarteefiHelper.valueToPercent(cachedSpeedValue);
-                                          const currentSpeedPercent = service.getCharacteristic(this.Characteristic.RotationSpeed).value as number;
-                                          
-                                          // Only update if different (avoid unnecessary updates)
-                                          if (currentSpeedPercent !== targetSpeedPercent) {
-                                              this.log.debug(`[REFRESH / ${acc.displayName}] Updating RotationSpeed from ${currentSpeedPercent}% to ${targetSpeedPercent}%`);
-                                              service.updateCharacteristic(this.Characteristic.RotationSpeed, targetSpeedPercent);
+                                      const isFanOn = cachedSpeedValue !== null && cachedSpeedValue > 0;
+                                      const currentSpeedPercent = service.getCharacteristic(this.Characteristic.RotationSpeed).value as number;
+
+                                      if (!isFanOn) {
+                                          // Fan OFF -> ensure RotationSpeed is 0
+                                          if (currentSpeedPercent !== 0) {
+                                              this.log.debug(`[REFRESH / ${acc.displayName}] Setting RotationSpeed to 0% (fan OFF via cache)`);
+                                              service.updateCharacteristic(this.Characteristic.RotationSpeed, 0);
+                                          }
+                                      } else {
+                                          const targetPercent = SmarteefiHelper.valueToPercent(cachedSpeedValue);
+                                          if (currentSpeedPercent !== targetPercent) {
+                                              this.log.debug(`[REFRESH / ${acc.displayName}] Updating RotationSpeed from ${currentSpeedPercent}% to ${targetPercent}% (cache)`);
+                                              service.updateCharacteristic(this.Characteristic.RotationSpeed, targetPercent);
                                           }
                                       }
                                   }
